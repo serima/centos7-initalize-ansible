@@ -1,0 +1,52 @@
+- name: setting SakuraServer VPS by root
+  hosts: sakura_init
+  user: root
+  vars:
+    user_name: admin
+    # NOTE: Password must be hashed. this is created with:
+    # openssl passwd -salt salty -1 mypass
+    user_password: $1$salty$WoG5tu8Y63f.rmnpDr9lz0
+    ssh_port: 10022
+
+  tasks:
+    - name: Install policycoreutils-python
+      yum: name=policycoreutils-python state=installed
+
+    - name: Change SSH port
+      lineinfile: dest=/etc/ssh/sshd_config
+                  regexp="^#Port "
+                  line="Port {{ ssh_port }}"
+                  state=present
+
+    - name: Disallow password authentication
+      lineinfile: dest=/etc/ssh/sshd_config
+                  regexp="^PasswordAuthentication"
+                  line="PasswordAuthentication no"
+                  state=present
+
+    - name: Disallow root SSH access
+      lineinfile: dest=/etc/ssh/sshd_config
+                  regexp="^PermitRootLogin"
+                  line="PermitRootLogin no"
+                  state=present
+
+    - name: Semanage
+      command: semanage port -a -t ssh_port_t -p tcp {{ ssh_port }}
+
+    - name: Create user
+      user: name={{ user_name }} password={{ user_password }} groups=wheel
+
+    - name: Allow wheel users to sudo
+      # NOTE: Because of the ': ' on the line, fully quote or use {{':'}}.
+      lineinfile: dest=/etc/sudoers
+                  regexp="^#\s*(%wheel\s+ALL=\(ALL\)\s+NOPASSWD{{':'}}\s+ALL)"
+                  line="\1" backrefs=yes state=present
+
+    - firewalld: port={{ ssh_port }}/tcp permanent=true state=enabled immediate=true
+    - firewalld: service=http permanent=true state=enabled immediate=true
+
+    - authorized_key: user=root key="{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    - authorized_key: user=admin key="{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    - name: restart sshd
+      command: systemctl restart sshd
